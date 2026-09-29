@@ -1,0 +1,82 @@
+import { expect, it, vi } from 'vitest'
+
+import type { ApiRequestOptions } from '@jingwei/api-client'
+
+import type { LoginInput } from '../../shared/index.js'
+import { useSignIn } from './use-sign-in.js'
+
+it('derives submitting state from the HTTP request lifecycle', async () => {
+  let finishLogin = () => undefined
+  const login = vi.fn(
+    (_input: LoginInput, options: ApiRequestOptions): Promise<{ error: null }> => {
+      options.onLoadingChange?.(true)
+      return new Promise((resolve) => {
+        finishLogin = () => {
+          options.onLoadingChange?.(false)
+          resolve({ error: null })
+        }
+      })
+    },
+  )
+  const enterWorkspace = vi.fn()
+  const rememberTenantCode = vi.fn()
+  const form = useSignIn({
+    login,
+    enterWorkspace,
+    rememberTenantCode,
+    initialTenantCode: () => 'hunanzhonghang',
+  })
+  form.username.value = 'admin'
+  form.password.value = 'test-password'
+  const submission = form.submit()
+
+  expect(form.submitting.value).toBe(true)
+  await form.submit()
+  expect(login).toHaveBeenCalledOnce()
+  expect(login.mock.calls[0]?.[0]).toEqual({
+    tenantCode: 'hunanzhonghang',
+    login: 'admin',
+    password: 'test-password',
+  })
+  expect(typeof login.mock.calls[0]?.[1].onLoadingChange).toBe('function')
+  finishLogin()
+  await submission
+
+  expect(enterWorkspace).toHaveBeenCalledOnce()
+  expect(rememberTenantCode).toHaveBeenCalledWith('hunanzhonghang')
+  expect(form.submitting.value).toBe(false)
+})
+
+it('renders a flat login error without exception control flow', async () => {
+  const enterWorkspace = vi.fn()
+  const rememberTenantCode = vi.fn()
+  const form = useSignIn({
+    login: (_input, options) => {
+      options.onLoadingChange?.(true)
+      options.onLoadingChange?.(false)
+      return Promise.resolve({ error: new Error('Invalid credentials') })
+    },
+    enterWorkspace,
+    rememberTenantCode,
+  })
+  form.username.value = 'admin'
+  form.password.value = 'incorrect'
+  await form.submit()
+  expect(form.errorMessage.value).toBe('Invalid credentials')
+  expect(form.submitting.value).toBe(false)
+  expect(enterWorkspace).not.toHaveBeenCalled()
+  expect(rememberTenantCode).not.toHaveBeenCalled()
+})
+
+it('rejects an incomplete form before starting an HTTP request', async () => {
+  const login = vi.fn()
+  const form = useSignIn({
+    login,
+    enterWorkspace: vi.fn(),
+  })
+
+  await form.submit()
+
+  expect(login).not.toHaveBeenCalled()
+  expect(form.errorMessage.value).toBe('请完整填写租户代码、账号和密码')
+})

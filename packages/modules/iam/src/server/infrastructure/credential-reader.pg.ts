@@ -1,0 +1,216 @@
+import { sql, type Kysely, type Transaction } from 'kysely'
+
+import { PostgresAuditWriter } from '@jingwei/audit'
+import {
+  toUserId,
+  type RequestId,
+  type SessionId,
+  type TenantId,
+  type UserId,
+} from '@jingwei/kernel'
+
+import type {
+  AuthenticationTransaction,
+  AuthenticationUnitOfWork,
+  CredentialSnapshot,
+  CredentialStore,
+} from '../application/authenticate-user.js'
+import type { UserStatus } from '../domain/user-status.js'
+
+interface UserTable {
+  id: string
+  tenant_id: string
+  username: string
+  username_normalized: string
+  email: string | null
+  email_normalized: string | null
+  phone: string | null
+  display_name: string
+  avatar: string | null
+  status: UserStatus
+  last_login_at: Date | null
+  created_at: Date
+  created_by: string | null
+  updated_at: Date
+  updated_by: string | null
+}
+
+interface CredentialTable {
+  user_id: string
+  password_hash: string
+  password_changed_at: Date
+  failed_attempts: number
+  locked_until: Date | null
+  created_at: Date
+  updated_at: Date
+}
+
+interface RoleTable {
+  id: string
+  tenant_id: string
+  code: string
+  name: string
+  description: string | null
+  status: 'ACTIVE' | 'DISABLED'
+  is_system: boolean
+  is_super: boolean
+  created_at: Date
+  created_by: string | null
+  updated_at: Date
+  updated_by: string | null
+}
+
+interface UserRoleTable {
+  tenant_id: string
+  user_id: string
+  role_id: string
+  created_at: Date
+  created_by: string | null
+}
+
+interface RolePermissionTable {
+  tenant_id: string
+  role_id: string
+  permission_code: string
+  scope_type: string
+  created_at: Date
+  created_by: string | null
+}
+
+interface RolePermissionOrgScopeTable {
+  tenant_id: string
+  role_id: string
+  permission_code: string
+  org_unit_id: string
+}
+
+interface PermissionDefinitionTable {
+  code: string
+  module_id: string
+  name: string
+  description: string | null
+  allowed_scope_types: string[]
+  data_scope_provider: string | null
+  active: boolean
+  created_at: Date
+  updated_at: Date
+}
+
+export interface IamDatabase {
+  'iam.user': UserTable
+  'iam.user_credential': CredentialTable
+  'iam.role': RoleTable
+  'iam.user_role': UserRoleTable
+  'iam.role_permission': RolePermissionTable
+  'iam.role_permission_org_scope': RolePermissionOrgScopeTable
+  'iam.permission_definition': PermissionDefinitionTable
+}
+
+export class PostgresCredentialStore implements CredentialStore, AuthenticationUnitOfWork {
+  constructor(private readonly database: Kysely<IamDatabase>) {}
+
+  async findByLogin(tenantId: string, normalizedLogin: string): Promise<CredentialSnapshot | null> {
+    const row = await this.database
+      .selectFrom('iam.user as user')
+      .innerJoin('iam.user_credential as credential', 'credential.user_id', 'user.id')
+      .select([
+        'user.id',
+        'user.display_name',
+        'user.avatar',
+        'user.status',
+        'credential.password_hash',
+        'credential.locked_until',
+      ])
+      .where('user.tenant_id', '=', tenantId)
+      .where((expression) =>
+        expression.or([
+          expression('user.username_normalized', '=', normalizedLogin),
+          expression('user.email_normalized', '=', normalizedLogin),
+        ]),
+      )
+      .executeTakeFirst()
+
+    return row === undefined
+      ? null
+      : {
+          userId: toUserId(row.id),
+          displayName: row.display_name,
+          avatarUrl: row.avatar,
+          status: row.status,
+          passwordHash: row.password_hash,
+          lockedUntil: row.locked_until,
+        }
+  }
+
+  async recordFailure(input: {
+    readonly userId: UserId
+    readonly occurredAt: Date
+    readonly maxFailedAttempts: number
+    readonly lockSeconds: number
+  }): Promise<void> {
+    const nextFailedAttempts = sql<number>`case
+      when locked_until is not null and locked_until <= ${input.occurredAt} then 1
+      else failed_attempts + 1
+    end`
+    const lockUntil = new Date(input.occurredAt.getTime() + input.lockSeconds * 1_000)
+
+    await this.database
+      .updateTable('iam.user_credential')
+      .set({
+        failed_attempts: nextFailedAttempts,
+        locked_until: sql<Date | null>`case
+          when ${nextFailedAttempts} >= ${input.maxFailedAttempts}
+            then ${lockUntil}::timestamptz
+          else null::timestamptz
+        end`,
+        updated_at: input.occurredAt,
+      })
+      .where('user_id', '=', input.userId)
+      .executeTakeFirstOrThrow()
+  }
+
+  run<T>(work: (transaction: AuthenticationTransaction) => Promise<T>): Promise<T> {
+    return this.database
+      .transaction()
+      .execute((transaction) => work(new PostgresAuthenticationTransaction(transaction)))
+  }
+}
+
+class PostgresAuthenticationTransaction implements AuthenticationTransaction {
+  constructor(private readonly transaction: Transaction<IamDatabase>) {}
+
+  async completeLogin(input: {
+    readonly requestId: RequestId
+    readonly tenantId: TenantId
+    readonly userId: UserId
+    readonly sessionId: SessionId
+    readonly occurredAt: Date
+    readonly ipAddress?: string
+    readonly userAgent?: string
+  }): Promise<void> {
+    await this.transaction
+      .updateTable('iam.user_credential')
+      .set({ failed_attempts: 0, locked_until: null, updated_at: input.occurredAt })
+      .where('user_id', '=', input.userId)
+      .executeTakeFirstOrThrow()
+    await this.transaction
+      .updateTable('iam.user')
+      .set({ last_login_at: input.occurredAt, updated_at: input.occurredAt })
+      .where('id', '=', input.userId)
+      .executeTakeFirstOrThrow()
+    await new PostgresAuditWriter(this.transaction, () => input.occurredAt).append({
+      context: {
+        requestId: input.requestId,
+        tenantId: input.tenantId,
+        userId: input.userId,
+      },
+      module: 'iam',
+      action: 'authentication.login',
+      entityType: 'AUTH_SESSION',
+      entityId: input.sessionId,
+      result: 'SUCCESS',
+      ...(input.ipAddress === undefined ? {} : { ipAddress: input.ipAddress }),
+      ...(input.userAgent === undefined ? {} : { userAgent: input.userAgent }),
+    })
+  }
+}

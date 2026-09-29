@@ -10,7 +10,6 @@ import {
   documentPageQuerySchema,
   documentVersionListSchema,
   documentWithVersionSchema,
-  maximumAuditDocumentBytes,
 } from '../../shared/document.js'
 import { projectPermissionRequirements } from '../application/authorization-requirements.js'
 
@@ -23,7 +22,7 @@ const mutation = [
 const projectParam = z.object({ projectId: z.uuid() })
 const documentParam = z.object({ projectId: z.uuid(), documentId: z.uuid() })
 const versionParam = z.object({ projectId: z.uuid(), documentId: z.uuid(), versionId: z.uuid() })
-const file = z.file().max(maximumAuditDocumentBytes).openapi({ type: 'string', format: 'binary' })
+const file = z.file().openapi({ type: 'string', format: 'binary' })
 const viewAccess = permissionApiAccess(projectPermissionRequirements.view)
 const manageAccess = permissionApiAccess(projectPermissionRequirements.manage)
 

@@ -9,6 +9,13 @@ import * as api from '../../client/index.js'
 import type { AuditDocument, AuditDocumentVersion } from '../../shared/document.js'
 import type { AuditTask, TaskDocumentBinding } from '../../shared/task.js'
 
+interface PendingBinding {
+  documentId: string
+  documentVersionId: string
+  documentName: string
+  role: string
+}
+
 function message(error: ApiClientError): string {
   return error.message || '操作失败，请稍后重试'
 }
@@ -41,9 +48,13 @@ export function useTaskManagement(projectId: string) {
   const uploadName = ref('')
   const uploadFile = ref<File | null>(null)
   const fileInputRevision = ref(0)
+  const pendingBindings = ref<Record<string, PendingBinding>>({})
   const error = ref('')
 
   const selected = computed(() => items.value.find((item) => item.id === selectedId.value) ?? null)
+  const pendingBinding = computed(() =>
+    selectedId.value === null ? null : (pendingBindings.value[selectedId.value] ?? null),
+  )
   const hasPrevious = computed(() => offset.value > 0)
   const hasNext = computed(() => offset.value + pageSize < total.value)
   const hasPreviousDocumentPage = computed(() => documentOffset.value > 0)
@@ -237,6 +248,12 @@ export function useTaskManagement(projectId: string) {
   }
 
   async function uploadAndBind() {
+    const task = selected.value
+    if (task === null) return
+    if (pendingBinding.value !== null) {
+      await retryBinding()
+      return
+    }
     const file = uploadFile.value
     const nameValue = uploadName.value.trim()
     const roleValue = uploadRole.value.trim()
@@ -249,6 +266,15 @@ export function useTaskManagement(projectId: string) {
       error.value = message(uploaded.error)
       return
     }
+    pendingBindings.value = {
+      ...pendingBindings.value,
+      [task.id]: {
+        documentId: uploaded.data.document.id,
+        documentVersionId: uploaded.data.version.id,
+        documentName: uploaded.data.document.name,
+        role: roleValue,
+      },
+    }
     const bound = await bindDocument(uploaded.data.document.id, uploaded.data.version.id, roleValue)
     const bindingError = error.value
     documentOffset.value = 0
@@ -257,10 +283,35 @@ export function useTaskManagement(projectId: string) {
       error.value = `文件已上传到项目文档库，但未绑定任务：${bindingError}`
       return
     }
+    clearPending()
+  }
+
+  function clearPending() {
+    if (selectedId.value === null) return
+    const next: Record<string, PendingBinding> = {}
+    for (const [taskId, binding] of Object.entries(pendingBindings.value)) {
+      if (taskId !== selectedId.value) next[taskId] = binding
+    }
+    pendingBindings.value = next
     uploadName.value = ''
     uploadRole.value = ''
     uploadFile.value = null
     fileInputRevision.value++
+    error.value = ''
+  }
+
+  async function retryBinding() {
+    const task = selected.value
+    const pending = pendingBinding.value
+    if (task === null || pending === null) return
+    const fresh = await api.getTask(projectId, task.id, request.options)
+    if (fresh.error !== null) {
+      error.value = message(fresh.error)
+      return
+    }
+    replaceTask(fresh.data)
+    const bound = await bindDocument(pending.documentId, pending.documentVersionId, pending.role)
+    if (bound) clearPending()
   }
 
   async function unbind(bindingId: string) {
@@ -359,6 +410,7 @@ export function useTaskManagement(projectId: string) {
     uploadName,
     uploadFile,
     fileInputRevision,
+    pendingBinding,
     load,
     loadDocuments,
     select,
@@ -368,6 +420,8 @@ export function useTaskManagement(projectId: string) {
     chooseDocument,
     chooseFile,
     uploadAndBind,
+    retryBinding,
+    clearPending,
     unbind,
     download,
     page,

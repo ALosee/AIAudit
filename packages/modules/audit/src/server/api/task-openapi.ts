@@ -14,7 +14,10 @@ import {
   unbindTaskDocumentSchema,
   updateTaskSchema,
 } from '../../shared/task.js'
-import { taskPermissionRequirements } from '../application/authorization-requirements.js'
+import {
+  projectPermissionRequirements,
+  taskPermissionRequirements,
+} from '../application/authorization-requirements.js'
 
 const json = <TSchema>(schema: TSchema) => ({ 'application/json': { schema } })
 const error = (description: string) => ({ description, content: json(apiErrorSchema) })
@@ -25,8 +28,14 @@ const mutation = [
 const projectParam = z.object({ projectId: z.uuid() })
 const taskParam = z.object({ projectId: z.uuid(), taskId: z.uuid() })
 const bindingParam = z.object({ projectId: z.uuid(), taskId: z.uuid(), bindingId: z.uuid() })
-const viewAccess = permissionApiAccess(taskPermissionRequirements.view)
-const manageAccess = permissionApiAccess(taskPermissionRequirements.manage)
+const viewAccess = permissionApiAccess(
+  taskPermissionRequirements.view,
+  projectPermissionRequirements.view,
+)
+const manageAccess = permissionApiAccess(
+  taskPermissionRequirements.manage,
+  projectPermissionRequirements.view,
+)
 
 export const taskApiRoutes = {
   list: createApiRoute(viewAccess, {

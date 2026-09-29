@@ -106,6 +106,7 @@ describe('API documentation', () => {
         kind: 'PERMISSION',
         requirements: [
           { permission: 'audit.task.view', capability: 'audit.tasks', scope: 'UNSCOPED' },
+          { permission: 'audit.project.view', capability: 'audit.projects', scope: 'UNSCOPED' },
         ],
       })
       expect(
@@ -118,6 +119,7 @@ describe('API documentation', () => {
         kind: 'PERMISSION',
         requirements: [
           { permission: 'audit.task.manage', capability: 'audit.tasks', scope: 'UNSCOPED' },
+          { permission: 'audit.project.view', capability: 'audit.projects', scope: 'UNSCOPED' },
         ],
       })
 

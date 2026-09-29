@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import type { Kysely } from 'kysely'
 
 import { PostgresAuditWriter } from '@jingwei/audit'
@@ -5,7 +7,7 @@ import type { ApplicationContext, TenantId } from '@jingwei/kernel'
 
 import type { AuditTask, TaskDocumentBinding, TaskListQuery } from '../../shared/task.js'
 import type { TaskStore, TaskTransaction, TaskUnitOfWork } from '../application/task-store.js'
-import type { DocumentDatabase } from './document-store.pg.js'
+import { PostgresDocumentStore, type DocumentDatabase } from './document-store.pg.js'
 
 interface TaskRow {
   id: string
@@ -50,6 +52,15 @@ function toTask(row: TaskRow): AuditTask {
     revision: row.revision,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
+  }
+}
+
+function auditedTask(task: AuditTask) {
+  return {
+    projectId: task.projectId,
+    revision: task.revision,
+    nameSha256: createHash('sha256').update(task.name).digest('hex'),
+    objectiveSha256: createHash('sha256').update(task.objective).digest('hex'),
   }
 }
 
@@ -239,49 +250,7 @@ export class PostgresTaskUnitOfWork implements TaskUnitOfWork {
     return this.db.transaction().execute(async (transaction) =>
       work({
         tasks: new PostgresTaskStore(transaction),
-        documents: {
-          get: async (tenantId, projectId, documentId) => {
-            const row = await transaction
-              .selectFrom('audit.document')
-              .selectAll()
-              .where('tenant_id', '=', tenantId)
-              .where('project_id', '=', projectId)
-              .where('id', '=', documentId)
-              .executeTakeFirst()
-            return row === undefined
-              ? null
-              : {
-                  id: row.id,
-                  projectId: row.project_id,
-                  name: row.name,
-                  latestVersionNumber: row.latest_version_number,
-                  createdAt: row.created_at.toISOString(),
-                  updatedAt: row.updated_at.toISOString(),
-                }
-          },
-          getVersion: async (tenantId, documentId, versionId) => {
-            const row = await transaction
-              .selectFrom('audit.document_version')
-              .selectAll()
-              .where('tenant_id', '=', tenantId)
-              .where('document_id', '=', documentId)
-              .where('id', '=', versionId)
-              .executeTakeFirst()
-            return row === undefined
-              ? null
-              : {
-                  id: row.id,
-                  documentId: row.document_id,
-                  versionNumber: row.version_number,
-                  fileName: row.file_name,
-                  contentType: row.content_type,
-                  byteSize: row.byte_size,
-                  sha256: row.sha256,
-                  objectKey: row.object_key,
-                  createdAt: row.created_at.toISOString(),
-                }
-          },
-        },
+        documents: new PostgresDocumentStore(transaction.$pickTables<keyof DocumentDatabase>()),
         projectStatus: async (tenantId, projectId) => {
           const row = await transaction
             .selectFrom('audit.project')
@@ -300,9 +269,17 @@ export class PostgresTaskUnitOfWork implements TaskUnitOfWork {
             entityType: 'task',
             entityId: after.id,
             result: 'SUCCESS',
-            before:
-              before === null ? null : { projectId: before.projectId, revision: before.revision },
-            after: { projectId: after.projectId, revision: after.revision },
+            before: before === null ? null : auditedTask(before),
+            after: {
+              ...auditedTask(after),
+              changedFields:
+                before === null
+                  ? ['name', 'objective']
+                  : [
+                      ...(before.name === after.name ? [] : ['name']),
+                      ...(before.objective === after.objective ? [] : ['objective']),
+                    ],
+            },
           })
         },
         recordBinding: async (context, action, binding) => {

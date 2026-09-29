@@ -11,7 +11,11 @@ import type {
   DocumentVersionList,
   DocumentWithVersion,
 } from '../../shared/document.js'
-import { validateDocumentFile } from '../domain/document-file.js'
+import {
+  DocumentFileValidationError,
+  validateDocumentFile,
+  type DocumentFileValidationReason,
+} from '../domain/document-file.js'
 import { projectPermissionRequirements } from './authorization-requirements.js'
 import type { DocumentDigest } from './document-digest.js'
 import type { DocumentStore, DocumentUnitOfWork, StoredDocumentVersion } from './document-store.js'
@@ -57,6 +61,31 @@ function publicVersion(version: StoredDocumentVersion): AuditDocumentVersion {
   }
 }
 
+const documentFileErrors = {
+  INVALID_NAME: { code: 'DOCUMENT_FILE_NAME_INVALID', message: '文件名无效', status: 422 },
+  EMPTY: { code: 'DOCUMENT_FILE_EMPTY', message: '文件不能为空', status: 422 },
+  TOO_LARGE: { code: 'DOCUMENT_FILE_TOO_LARGE', message: '文件不能超过 20 MiB', status: 413 },
+  INVALID_PDF: { code: 'DOCUMENT_FILE_INVALID', message: 'PDF 文件内容无效', status: 422 },
+  INVALID_DOCX: { code: 'DOCUMENT_FILE_INVALID', message: 'DOCX 文件内容无效', status: 422 },
+  UNSUPPORTED: {
+    code: 'DOCUMENT_FILE_UNSUPPORTED',
+    message: '仅支持 PDF 和 DOCX 文件',
+    status: 415,
+  },
+} as const satisfies Record<
+  DocumentFileValidationReason,
+  { code: string; message: string; status: number }
+>
+
+function validateUpload(fileName: string, bytes: Uint8Array) {
+  try {
+    return validateDocumentFile(fileName, bytes)
+  } catch (cause) {
+    if (!(cause instanceof DocumentFileValidationError)) throw cause
+    throw new ApplicationError({ ...documentFileErrors[cause.reason], cause })
+  }
+}
+
 export class ManageDocuments {
   constructor(
     private readonly projects: ProjectStore,
@@ -99,7 +128,7 @@ export class ManageDocuments {
     const project = (await this.projects.get(context.tenantId, projectId)) ?? projectNotFound()
     if (project.status === 'ARCHIVED') archived()
     const storage = storageRequired(this.storage)
-    const file = validateDocumentFile(fileName, bytes)
+    const file = validateUpload(fileName, bytes)
     const now = new Date().toISOString()
     const documentId = newEntityId()
     const versionId = newEntityId()
@@ -137,7 +166,7 @@ export class ManageDocuments {
     if (project.status === 'ARCHIVED') archived()
     if ((await this.documents.get(context.tenantId, projectId, documentId)) === null) notFound()
     const storage = storageRequired(this.storage)
-    const file = validateDocumentFile(fileName, bytes)
+    const file = validateUpload(fileName, bytes)
     const now = new Date().toISOString()
     const versionId = newEntityId()
     const provisional = this.version(context, documentId, versionId, 1, now, file, bytes)
@@ -177,12 +206,20 @@ export class ManageDocuments {
     versionId: string,
   ): Promise<DocumentDownload> {
     await this.access.requireUnscopedPermission(context, projectPermissionRequirements.view)
-    if ((await this.documents.get(context.tenantId, projectId, documentId)) === null) notFound()
+    const document =
+      (await this.documents.get(context.tenantId, projectId, documentId)) ?? notFound()
     const version =
       (await this.documents.getVersion(context.tenantId, documentId, versionId)) ?? notFound()
     const expiresInSeconds = 60
+    const url = await storageRequired(this.storage).getSignedUrl(
+      version.objectKey,
+      expiresInSeconds,
+    )
+    await this.work.run((tx) =>
+      tx.record(context, 'document.download_issued', document, publicVersion(version)),
+    )
     return {
-      url: await storageRequired(this.storage).getSignedUrl(version.objectKey, expiresInSeconds),
+      url,
       expiresAt: new Date(Date.now() + expiresInSeconds * 1000).toISOString(),
     }
   }

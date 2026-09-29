@@ -279,37 +279,64 @@ function confirmUnbind(bindingId: string) {
             class="mt-6 flex flex-col gap-3 border-t border-border pt-4"
             @submit.prevent="tasks.uploadAndBind"
           >
-            <h4 class="m-0 text-sm font-semibold">上传并绑定新文档</h4>
-            <p class="m-0 text-xs text-muted-foreground">
-              上传后文件归入项目文档库，同时把首个版本绑定到当前任务。
-            </p>
-            <label class="flex flex-col gap-1 text-sm font-medium"
-              >文档名称<Input
-                v-model="tasks.uploadName.value"
-                :maxlength="200"
-                :disabled="tasks.loading.value"
-            /></label>
-            <label class="flex flex-col gap-1 text-sm font-medium"
-              >PDF 或 DOCX 文件<input
-                :key="tasks.fileInputRevision.value"
-                type="file"
-                accept=".pdf,.docx"
-                :disabled="tasks.loading.value"
-                @change="tasks.chooseFile(selectedFile($event))"
-            /></label>
-            <label class="flex flex-col gap-1 text-sm font-medium"
-              >本次审核中的角色<Input
-                v-model="tasks.uploadRole.value"
-                placeholder="例如：待审核合同"
-                :maxlength="100"
-                :disabled="tasks.loading.value"
-            /></label>
-            <Button
-              size="sm"
-              type="submit"
-              :disabled="tasks.loading.value || tasks.uploadFile.value === null"
-              >上传并绑定</Button
+            <div
+              v-if="tasks.pendingBinding.value"
+              class="rounded-lg border border-border bg-accent/40 p-3 text-sm"
             >
+              <p class="m-0">
+                {{ tasks.pendingBinding.value.documentName }} 已存入项目文档库，尚未绑定到任务。
+              </p>
+              <div class="mt-3 flex gap-2">
+                <Button
+                  size="sm"
+                  type="button"
+                  :disabled="tasks.loading.value"
+                  @click="tasks.retryBinding"
+                  >重新绑定现有版本</Button
+                >
+                <Button
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                  :disabled="tasks.loading.value"
+                  @click="tasks.clearPending"
+                  >仅保留在项目库</Button
+                >
+              </div>
+            </div>
+            <template v-else>
+              <h4 class="m-0 text-sm font-semibold">上传并绑定新文档</h4>
+              <p class="m-0 text-xs text-muted-foreground">
+                上传后文件归入项目文档库，同时把首个版本绑定到当前任务。
+              </p>
+              <label class="flex flex-col gap-1 text-sm font-medium"
+                >文档名称<Input
+                  v-model="tasks.uploadName.value"
+                  :maxlength="200"
+                  :disabled="tasks.loading.value"
+              /></label>
+              <label class="flex flex-col gap-1 text-sm font-medium"
+                >PDF 或 DOCX 文件<input
+                  :key="tasks.fileInputRevision.value"
+                  type="file"
+                  accept=".pdf,.docx"
+                  :disabled="tasks.loading.value"
+                  @change="tasks.chooseFile(selectedFile($event))"
+              /></label>
+              <label class="flex flex-col gap-1 text-sm font-medium"
+                >本次审核中的角色<Input
+                  v-model="tasks.uploadRole.value"
+                  placeholder="例如：待审核合同"
+                  :maxlength="100"
+                  :disabled="tasks.loading.value"
+              /></label>
+              <Button
+                size="sm"
+                type="submit"
+                :disabled="tasks.loading.value || tasks.uploadFile.value === null"
+                >上传并绑定</Button
+              >
+            </template>
           </form>
           <p class="mt-5 border-t border-border pt-4 text-xs text-muted-foreground">
             当前阶段仅配置任务和文档输入；审核计划、解析、规则与运行尚未接入。

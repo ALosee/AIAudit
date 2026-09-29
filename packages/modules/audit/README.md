@@ -21,7 +21,7 @@ IAM 通过公开授权 API 提供权限检查。当前 Project 列表是租户�
 
 ## 数据所有权
 
-`audit.project` 存储项目名称、描述、状态、revision 和创建/修改人、时间。`audit.document` 属于 Project，`audit.document_version` 保存不可覆盖的版本号、原文件名、格式、字节数、SHA-256、对象 key 和时间。`audit.task` 属于 Project，保存名称、审核目标、`DRAFT` 状态和乐观锁 revision；`audit.task_document_binding` 同时固定任务、项目文档、文档版本及任务角色。复合外键防止跨租户、跨项目及版本错配。撤销绑定只标记 removed，保留历史；有效绑定按任务、文档和角色唯一。每次查询与写入均限定 `tenant_id`；版本 API 不暴露对象 key。Project、Document、Task 和绑定使用 UUID v7。任务迁移为 `20260929130000_audit_task_document_binding.ts` 与 `20260929131000_audit_task_draft_status.ts`，承接已有 Project 和 DocumentVersion 迁移。
+`audit.project` 存储项目名称、描述、状态、revision 和创建/修改人、时间。`audit.document` 属于 Project，`audit.document_version` 保存不可覆盖的版本号、原文件名、格式、字节数、SHA-256、对象 key 和时间，`20260929132000_audit_document_version_immutable.ts` 在数据库层拒绝版本 UPDATE/DELETE。`audit.task` 属于 Project，保存名称、审核目标、`DRAFT` 状态和乐观锁 revision；`audit.task_document_binding` 同时固定任务、项目文档、文档版本及任务角色。复合外键防止跨租户、跨项目及版本错配。撤销绑定只标记 removed，保留历史；有效绑定按任务、文档和角色唯一。每次查询与写入均限定 `tenant_id`；版本 API 不暴露对象 key。Project、Document、Task 和绑定使用 UUID v7。任务迁移为 `20260929130000_audit_task_document_binding.ts` 与 `20260929131000_audit_task_draft_status.ts`，承接已有 Project 和 DocumentVersion 迁移。
 
 文档、规则和任务均由 Audit 拥有；任务用例独立于 Project 用例。此阶段允许人工创建不可执行的任务草稿以配置目标和输入；真正启动 Run 前仍需可验证的 AuditPlan、规则配置和证据链。
 
@@ -46,7 +46,7 @@ IAM 通过公开授权 API 提供权限检查。当前 Project 列表是租户�
 | GET/POST  | `/projects/{projectId}/tasks/{taskId}/documents`                             | 列出或绑定指定文档版本 |
 | POST      | `/projects/{projectId}/tasks/{taskId}/documents/{bindingId}/unbind`          | 撤销任务绑定           |
 
-外部输入经 Zod/OpenAPI 校验，客户端由模块专属 `paths` 类型与 Soybean Fetch 构建。项目和任务写操作在事务内写入业务数据与 append-only 审计记录；文档先写对象，再在同一数据库事务内写文档/版本元数据与审计，事务失败时补偿删除对象。任务使用独立 `audit.task.view/manage` 权限，文档沿用 `audit.project.view/manage` 权限。任务绑定必须属于同一租户和项目，且版本属于指定文档；任务 revision 覆盖任务资料和绑定变化。任务内“上传并绑定”当前由客户端顺序调用上传和绑定；若绑定失败，已上传文件保留在项目文档库并给出提示。稳定错误码另包括 `TASK_NOT_FOUND`、`TASK_REVISION_CONFLICT`、`TASK_DOCUMENT_BINDING_NOT_FOUND`、`TASK_DOCUMENT_BINDING_CONFLICT`、`DOCUMENT_VERSION_NOT_FOUND`。
+外部输入经 Zod/OpenAPI 校验，文档文件的 Domain 校验只产生失败原因，由 Application 映射为稳定错误码和 HTTP 状态；客户端由模块专属 `paths` 类型与 Soybean Fetch 构建。项目和任务写操作在事务内写入业务数据与 append-only 审计记录；文档先写对象，再在同一数据库事务内写文档/版本元数据与审计，事务失败时补偿删除对象。签发下载地址也记录文档版本审计，但不记录签名 URL。任务 API 要求 `audit.task.view/manage` 和 `audit.project.view`，文档 API 使用 `audit.project.view/manage`。任务绑定必须属于同一租户和项目，且版本属于指定文档；任务 revision 覆盖任务资料和绑定变化。任务资料审计记录变更字段及字段哈希，不记录完整审核目标。任务内“上传并绑定”由客户端顺序调用上传和绑定；若绑定失败，已上传版本保留在项目文档库，界面可刷新任务 revision 后重试绑定该版本，或明确选择只保留在项目库。稳定错误码另包括 `TASK_NOT_FOUND`、`TASK_REVISION_CONFLICT`、`TASK_DOCUMENT_BINDING_NOT_FOUND`、`TASK_DOCUMENT_BINDING_CONFLICT`、`DOCUMENT_VERSION_NOT_FOUND`。
 
 ## Public API 与事件
 

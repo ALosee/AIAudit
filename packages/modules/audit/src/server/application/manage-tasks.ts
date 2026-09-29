@@ -11,7 +11,10 @@ import type {
   TaskWithBinding,
   UpdateTask,
 } from '../../shared/task.js'
-import { taskPermissionRequirements } from './authorization-requirements.js'
+import {
+  projectPermissionRequirements,
+  taskPermissionRequirements,
+} from './authorization-requirements.js'
 import type { ProjectStore } from './project-store.js'
 import type { TaskStore, TaskTransaction, TaskUnitOfWork } from './task-store.js'
 
@@ -58,25 +61,35 @@ export class ManageTasks {
     private readonly access: IamAccess,
   ) {}
 
-  async list(context: AuthContext, projectId: string, query: TaskListQuery): Promise<TaskList> {
+  private async requireView(context: AuthContext) {
     await this.access.requireUnscopedPermission(context, taskPermissionRequirements.view)
+    await this.access.requireUnscopedPermission(context, projectPermissionRequirements.view)
+  }
+
+  private async requireManage(context: AuthContext) {
+    await this.access.requireUnscopedPermission(context, taskPermissionRequirements.manage)
+    await this.access.requireUnscopedPermission(context, projectPermissionRequirements.view)
+  }
+
+  async list(context: AuthContext, projectId: string, query: TaskListQuery): Promise<TaskList> {
+    await this.requireView(context)
     if ((await this.projects.get(context.tenantId, projectId)) === null) projectNotFound()
     return { ...(await this.tasks.list(context.tenantId, projectId, query)), ...query }
   }
 
   async get(context: AuthContext, projectId: string, taskId: string): Promise<AuditTask> {
-    await this.access.requireUnscopedPermission(context, taskPermissionRequirements.view)
+    await this.requireView(context)
     return (await this.tasks.get(context.tenantId, projectId, taskId)) ?? taskNotFound()
   }
 
   async listBindings(context: AuthContext, projectId: string, taskId: string) {
-    await this.access.requireUnscopedPermission(context, taskPermissionRequirements.view)
+    await this.requireView(context)
     if ((await this.tasks.get(context.tenantId, projectId, taskId)) === null) taskNotFound()
     return { items: await this.tasks.listBindings(context.tenantId, projectId, taskId) }
   }
 
   async create(context: AuthContext, projectId: string, input: CreateTask): Promise<AuditTask> {
-    await this.access.requireUnscopedPermission(context, taskPermissionRequirements.manage)
+    await this.requireManage(context)
     return this.work.run(async (tx) => {
       await requireActiveProject(tx, context, projectId)
       const now = new Date().toISOString()
@@ -102,7 +115,7 @@ export class ManageTasks {
     taskId: string,
     input: UpdateTask,
   ): Promise<AuditTask> {
-    await this.access.requireUnscopedPermission(context, taskPermissionRequirements.manage)
+    await this.requireManage(context)
     return this.work.run(async (tx) => {
       await requireActiveProject(tx, context, projectId)
       const before =
@@ -127,7 +140,7 @@ export class ManageTasks {
     taskId: string,
     input: BindTaskDocument,
   ): Promise<TaskWithBinding> {
-    await this.access.requireUnscopedPermission(context, taskPermissionRequirements.manage)
+    await this.requireManage(context)
     return this.work.run(async (tx) => {
       await requireActiveProject(tx, context, projectId)
       const before =
@@ -182,7 +195,7 @@ export class ManageTasks {
     bindingId: string,
     expectedRevision: number,
   ): Promise<AuditTask> {
-    await this.access.requireUnscopedPermission(context, taskPermissionRequirements.manage)
+    await this.requireManage(context)
     return this.work.run(async (tx) => {
       await requireActiveProject(tx, context, projectId)
       const before =

@@ -1,11 +1,23 @@
-import { ApplicationError } from '@jingwei/kernel'
-
 import { maximumAuditDocumentBytes, type AuditDocumentVersion } from '../../shared/document.js'
 
 export type DocumentContentType = AuditDocumentVersion['contentType']
+export type DocumentFileValidationReason =
+  | 'INVALID_NAME'
+  | 'EMPTY'
+  | 'TOO_LARGE'
+  | 'INVALID_PDF'
+  | 'INVALID_DOCX'
+  | 'UNSUPPORTED'
 
-function invalid(code: string, message: string, status: number): never {
-  throw new ApplicationError({ code, message, status })
+export class DocumentFileValidationError extends Error {
+  constructor(readonly reason: DocumentFileValidationReason) {
+    super(`Invalid document file: ${reason}`)
+    this.name = 'DocumentFileValidationError'
+  }
+}
+
+function invalid(reason: DocumentFileValidationReason): never {
+  throw new DocumentFileValidationError(reason)
 }
 
 function hasControlCharacter(value: string): boolean {
@@ -25,16 +37,16 @@ export function validateDocumentFile(
 } {
   const normalized = fileName.normalize('NFC').split(/[/\\]/).at(-1)?.trim() ?? ''
   if (normalized.length === 0 || normalized.length > 255 || hasControlCharacter(normalized)) {
-    invalid('DOCUMENT_FILE_NAME_INVALID', '文件名无效', 422)
+    invalid('INVALID_NAME')
   }
-  if (bytes.byteLength === 0) invalid('DOCUMENT_FILE_EMPTY', '文件不能为空', 422)
+  if (bytes.byteLength === 0) invalid('EMPTY')
   if (bytes.byteLength > maximumAuditDocumentBytes) {
-    invalid('DOCUMENT_FILE_TOO_LARGE', '文件不能超过 20 MiB', 413)
+    invalid('TOO_LARGE')
   }
   const lower = normalized.toLocaleLowerCase('en-US')
   if (lower.endsWith('.pdf')) {
     if (bytes.byteLength < 5 || String.fromCharCode(...bytes.subarray(0, 5)) !== '%PDF-') {
-      invalid('DOCUMENT_FILE_INVALID', 'PDF 文件内容无效', 422)
+      invalid('INVALID_PDF')
     }
     return { fileName: normalized, contentType: 'application/pdf' }
   }
@@ -46,12 +58,12 @@ export function validateDocumentFile(
       bytes[2] !== 0x03 ||
       bytes[3] !== 0x04
     ) {
-      invalid('DOCUMENT_FILE_INVALID', 'DOCX 文件内容无效', 422)
+      invalid('INVALID_DOCX')
     }
     return {
       fileName: normalized,
       contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     }
   }
-  return invalid('DOCUMENT_FILE_UNSUPPORTED', '仅支持 PDF 和 DOCX 文件', 415)
+  return invalid('UNSUPPORTED')
 }

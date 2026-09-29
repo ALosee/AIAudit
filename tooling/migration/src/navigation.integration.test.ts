@@ -11,6 +11,15 @@ import {
 } from '@jingwei/auth/shared'
 import { StaticMigrationProvider } from '@jingwei/database'
 import { newEntityId, newRequestId, newTenantId, newUserId } from '@jingwei/kernel'
+import {
+  auditTaskSchema,
+  documentDownloadSchema,
+  documentVersionListSchema,
+  documentWithVersionSchema,
+  projectSchema,
+  taskDocumentBindingListSchema,
+  taskWithBindingSchema,
+} from '@jingwei/module-audit/shared'
 import { createAuthorizationEvaluator } from '@jingwei/module-iam/server/public'
 import {
   navigationResponseSchema,
@@ -29,6 +38,19 @@ const databaseUrl = process.env.TEST_DATABASE_URL
 describe.skipIf(databaseUrl === undefined)('real PostgreSQL navigation/API', () => {
   let runtime: Runtime
   let app: Awaited<ReturnType<typeof createApp>>
+  const storedObjects = new Map<string, Uint8Array>()
+  const objectStorage: NonNullable<Runtime['objectStorage']> = {
+    put: ({ key, body, contentType }) => {
+      storedObjects.set(key, body)
+      return Promise.resolve({ key, contentType, size: body.byteLength })
+    },
+    get: (key) => Promise.resolve(storedObjects.get(key) ?? null),
+    delete: (key) => {
+      storedObjects.delete(key)
+      return Promise.resolve()
+    },
+    getSignedUrl: (key) => Promise.resolve(`https://storage.example.test/${key}`),
+  }
   const legacyTenant = newTenantId(),
     legacyRoot = newEntityId(),
     legacyVersion = newEntityId(),
@@ -112,7 +134,7 @@ describe.skipIf(databaseUrl === undefined)('real PostgreSQL navigation/API', () 
         /* failures asserted through HTTP */
       },
     }
-    app = await createApp({ ...runtime, logger: silent })
+    app = await createApp({ ...runtime, logger: silent, objectStorage })
   })
   afterAll(async () => {
     await runtime.dispose()
@@ -152,6 +174,35 @@ describe.skipIf(databaseUrl === undefined)('real PostgreSQL navigation/API', () 
         origin: 'http://localhost:5173',
         cookie: accessTokenCookieName + '=' + session.accessToken,
       },
+    })
+  }
+  async function requestAudit(
+    path: string,
+    session: CreatedSession,
+    method = 'GET',
+    body?: unknown,
+  ) {
+    const headers = new Headers({
+      origin: 'http://localhost:5173',
+      cookie: `${accessTokenCookieName}=${session.accessToken}; ${csrfCookieName}=${session.csrfToken}`,
+      [csrfHeaderName]: session.csrfToken,
+    })
+    if (body !== undefined) headers.set('content-type', 'application/json')
+    return app.request('/api/v1/audit' + path, {
+      method,
+      headers,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    })
+  }
+  async function requestAuditForm(path: string, session: CreatedSession, form: FormData) {
+    return app.request('/api/v1/audit' + path, {
+      method: 'POST',
+      headers: {
+        origin: 'http://localhost:5173',
+        cookie: `${accessTokenCookieName}=${session.accessToken}; ${csrfCookieName}=${session.csrfToken}`,
+        [csrfHeaderName]: session.csrfToken,
+      },
+      body: form,
     })
   }
   async function fixture() {
@@ -209,6 +260,279 @@ describe.skipIf(databaseUrl === undefined)('real PostgreSQL navigation/API', () 
       expectedEditRevision: version.editRevision,
     }
   }
+
+  it('binds a project document version to a task through real API and PostgreSQL constraints', async () => {
+    const { tenantId, admin, reader } = await fixture()
+    const projectResponse = await requestAudit('/projects', admin.session, 'POST', {
+      name: '中文采购项目',
+      description: '',
+    })
+    expect(projectResponse.status).toBe(201)
+    const project = projectSchema.parse(await projectResponse.json())
+    const otherProjectResponse = await requestAudit('/projects', admin.session, 'POST', {
+      name: '其他项目',
+      description: '',
+    })
+    expect(otherProjectResponse.status).toBe(201)
+    const otherProject = projectSchema.parse(await otherProjectResponse.json())
+    const taskResponse = await requestAudit(
+      `/projects/${project.id}/tasks`,
+      admin.session,
+      'POST',
+      {
+        name: '合同审核',
+        objective: '核对采购金额和主体',
+      },
+    )
+    expect(taskResponse.status).toBe(201)
+    const task = auditTaskSchema.parse(await taskResponse.json())
+    expect(task.status).toBe('DRAFT')
+    await sql`INSERT INTO iam.role_permission (tenant_id, role_id, permission_code, scope_type, created_at)
+      VALUES (${tenantId}, ${reader.roleId}, 'audit.task.view', 'ALL', now())`.execute(
+      runtime.database.view(),
+    )
+    const forbidden = await requestAudit(`/projects/${project.id}/tasks?limit=50`, reader.session)
+    expect(forbidden.status).toBe(403)
+
+    const db = runtime.database.view()
+    const documentId = newEntityId(),
+      versionId = newEntityId(),
+      nextVersionId = newEntityId()
+    const otherDocumentId = newEntityId(),
+      otherVersionId = newEntityId()
+    await sql`INSERT INTO audit.document
+      (id, tenant_id, project_id, name, latest_version_number, created_at, created_by, updated_at, updated_by)
+      VALUES (${documentId}, ${tenantId}, ${project.id}, '合同', 2, now(), ${admin.userId}, now(), ${admin.userId}),
+             (${otherDocumentId}, ${tenantId}, ${otherProject.id}, '其他合同', 1, now(), ${admin.userId}, now(), ${admin.userId})`.execute(
+      db,
+    )
+    await sql`INSERT INTO audit.document_version
+      (id, tenant_id, document_id, version_number, file_name, content_type, byte_size, sha256, object_key, created_at, created_by)
+      VALUES (${versionId}, ${tenantId}, ${documentId}, 1, '合同.pdf', 'application/pdf', 9, ${'a'.repeat(64)}, ${`test/${versionId}`}, now(), ${admin.userId}),
+             (${nextVersionId}, ${tenantId}, ${documentId}, 2, '合同-新版.pdf', 'application/pdf', 9, ${'b'.repeat(64)}, ${`test/${nextVersionId}`}, now(), ${admin.userId}),
+             (${otherVersionId}, ${tenantId}, ${otherDocumentId}, 1, '其他合同.pdf', 'application/pdf', 9, ${'c'.repeat(64)}, ${`test/${otherVersionId}`}, now(), ${admin.userId})`.execute(
+      db,
+    )
+
+    const boundResponse = await requestAudit(
+      `/projects/${project.id}/tasks/${task.id}/documents`,
+      admin.session,
+      'POST',
+      {
+        documentId,
+        documentVersionId: versionId,
+        role: '待审核合同',
+        expectedRevision: task.revision,
+      },
+    )
+    expect(boundResponse.status).toBe(201)
+    const bound = taskWithBindingSchema.parse(await boundResponse.json())
+    expect(bound.binding.documentVersionId).toBe(versionId)
+    expect(bound.task.revision).toBe(2)
+    const listResponse = await requestAudit(
+      `/projects/${project.id}/tasks/${task.id}/documents`,
+      admin.session,
+    )
+    expect(listResponse.status).toBe(200)
+    expect(
+      taskDocumentBindingListSchema.parse(await listResponse.json()).items[0]?.documentVersionId,
+    ).toBe(versionId)
+    const wrongProject = await requestAudit(
+      `/projects/${project.id}/tasks/${task.id}/documents`,
+      admin.session,
+      'POST',
+      {
+        documentId: otherDocumentId,
+        documentVersionId: otherVersionId,
+        role: '对照材料',
+        expectedRevision: 2,
+      },
+    )
+    expect(wrongProject.status).toBe(404)
+    const wrongVersion = await requestAudit(
+      `/projects/${project.id}/tasks/${task.id}/documents`,
+      admin.session,
+      'POST',
+      {
+        documentId,
+        documentVersionId: otherVersionId,
+        role: '对照材料',
+        expectedRevision: 2,
+      },
+    )
+    expect(wrongVersion.status).toBe(404)
+    await expect(
+      sql`INSERT INTO audit.task_document_binding
+      (id, tenant_id, project_id, task_id, document_id, document_version_id, role, created_at, created_by)
+      VALUES (${newEntityId()}, ${tenantId}, ${project.id}, ${task.id}, ${otherDocumentId}, ${otherVersionId}, '错误项目', now(), ${admin.userId})`.execute(
+        db,
+      ),
+    ).rejects.toThrow()
+    await expect(
+      sql`INSERT INTO audit.task_document_binding
+      (id, tenant_id, project_id, task_id, document_id, document_version_id, role, created_at, created_by)
+      VALUES (${newEntityId()}, ${tenantId}, ${project.id}, ${task.id}, ${documentId}, ${otherVersionId}, '错误版本', now(), ${admin.userId})`.execute(
+        db,
+      ),
+    ).rejects.toThrow()
+    const stale = await requestAudit(
+      `/projects/${project.id}/tasks/${task.id}/documents`,
+      admin.session,
+      'POST',
+      {
+        documentId,
+        documentVersionId: nextVersionId,
+        role: '对照材料',
+        expectedRevision: 1,
+      },
+    )
+    expect(stale.status).toBe(409)
+    const unbound = await requestAudit(
+      `/projects/${project.id}/tasks/${task.id}/documents/${bound.binding.id}/unbind`,
+      admin.session,
+      'POST',
+      { expectedRevision: 2 },
+    )
+    expect(unbound.status).toBe(200)
+    expect(auditTaskSchema.parse(await unbound.json()).revision).toBe(3)
+    const history = await sql<{
+      removed_at: Date | null
+    }>`SELECT removed_at FROM audit.task_document_binding WHERE id = ${bound.binding.id}`.execute(
+      db,
+    )
+    expect(history.rows[0]?.removed_at).toBeInstanceOf(Date)
+    const concurrentInput = {
+      documentId,
+      documentVersionId: nextVersionId,
+      role: '并发对照材料',
+      expectedRevision: 3,
+    }
+    const concurrent = await Promise.all([
+      requestAudit(
+        `/projects/${project.id}/tasks/${task.id}/documents`,
+        admin.session,
+        'POST',
+        concurrentInput,
+      ),
+      requestAudit(
+        `/projects/${project.id}/tasks/${task.id}/documents`,
+        admin.session,
+        'POST',
+        concurrentInput,
+      ),
+    ])
+    expect(concurrent.map((response) => response.status).sort()).toEqual([201, 409])
+    const updatedResponse = await requestAudit(
+      `/projects/${project.id}/tasks/${task.id}`,
+      admin.session,
+      'PATCH',
+      { name: '合同复核', objective: '核对发票和签章', expectedRevision: 4 },
+    )
+    expect(updatedResponse.status).toBe(200)
+    const taskAudit = await sql<{ before_data: unknown; after_data: unknown }>`
+      SELECT before_data, after_data FROM platform.audit_log
+      WHERE tenant_id = ${tenantId} AND entity_id = ${task.id} AND action = 'task.updated'
+    `.execute(db)
+    expect(taskAudit.rows[0]?.after_data).toMatchObject({
+      changedFields: ['name', 'objective'],
+      revision: 5,
+    })
+    expect(taskAudit.rows[0]?.after_data).toHaveProperty('nameSha256')
+    expect(taskAudit.rows[0]?.after_data).toHaveProperty('objectiveSha256')
+    expect(JSON.stringify(taskAudit.rows[0])).not.toContain('核对发票和签章')
+  })
+
+  it('uploads and versions Chinese documents through multipart API, with audit and immutable rows', async () => {
+    const { tenantId, admin, reader } = await fixture()
+    const projectResponse = await requestAudit('/projects', admin.session, 'POST', {
+      name: '中文文档测试',
+      description: '',
+    })
+    const project = projectSchema.parse(await projectResponse.json())
+    const pdf = new Uint8Array([37, 80, 68, 70, 45, 49, 46, 55, 10])
+    const upload = (fileName: string, bytes = pdf) => {
+      const form = new FormData()
+      form.set('name', '采购合同')
+      form.set('file', new File([bytes], fileName, { type: 'application/pdf' }))
+      return form
+    }
+    const createdResponse = await requestAuditForm(
+      `/projects/${project.id}/documents`,
+      admin.session,
+      upload('合同.pdf'),
+    )
+    expect(createdResponse.status).toBe(201)
+    const created = documentWithVersionSchema.parse(await createdResponse.json())
+    expect(created.version.versionNumber).toBe(1)
+    expect(created.version.fileName).toBe('合同.pdf')
+    expect('objectKey' in created.version).toBe(false)
+    const versionPath = `/projects/${project.id}/documents/${created.document.id}/versions`
+    const next = await Promise.all([
+      requestAuditForm(versionPath, admin.session, upload('合同-第二版.pdf')),
+      requestAuditForm(versionPath, admin.session, upload('合同-第三版.pdf')),
+    ])
+    expect(next.map((response) => response.status)).toEqual([201, 201])
+    const versions = await Promise.all(
+      next.map(async (response) => documentWithVersionSchema.parse(await response.json())),
+    )
+    expect(versions.map((entry) => entry.version.versionNumber).sort()).toEqual([2, 3])
+    const list = await requestAudit(versionPath + '?limit=50', admin.session)
+    expect(list.status).toBe(200)
+    expect(
+      documentVersionListSchema
+        .parse(await list.json())
+        .items.map((version) => version.versionNumber),
+    ).toEqual([3, 2, 1])
+    const downloadResponse = await requestAudit(
+      `${versionPath}/${created.version.id}/download`,
+      admin.session,
+    )
+    expect(downloadResponse.status).toBe(200)
+    const download = documentDownloadSchema.parse(await downloadResponse.json())
+    expect(download.url).toContain(`/tenants/${tenantId}/audit/documents/`)
+    const audit = await sql<{ action: string; after_data: unknown }>`
+      SELECT action, after_data FROM platform.audit_log
+      WHERE tenant_id = ${tenantId} AND entity_id = ${created.document.id}
+      ORDER BY created_at
+    `.execute(runtime.database.view())
+    expect(audit.rows.map((row) => row.action)).toEqual([
+      'document.created',
+      'document.version_added',
+      'document.version_added',
+      'document.download_issued',
+    ])
+    expect(JSON.stringify(audit.rows)).not.toContain('storage.example.test')
+    const db = runtime.database.view()
+    await expect(
+      sql`UPDATE audit.document_version SET file_name = '篡改.pdf'
+        WHERE id = ${created.version.id}`.execute(db),
+    ).rejects.toThrow('audit.document_version is immutable')
+    await expect(
+      sql`DELETE FROM audit.document_version WHERE id = ${created.version.id}`.execute(db),
+    ).rejects.toThrow('audit.document_version is immutable')
+    const denied = await requestAuditForm(
+      `/projects/${project.id}/documents`,
+      reader.session,
+      upload('无权限.pdf'),
+    )
+    expect(denied.status).toBe(403)
+    const unsupported = await requestAuditForm(
+      `/projects/${project.id}/documents`,
+      admin.session,
+      upload('合同.txt'),
+    )
+    expect(unsupported.status).toBe(415)
+    const oversized = new Uint8Array(20 * 1024 * 1024 + 1)
+    oversized.set(pdf)
+    const tooLarge = await requestAuditForm(
+      `/projects/${project.id}/documents`,
+      admin.session,
+      upload('过大.pdf', oversized),
+    )
+    expect(tooLarge.status).toBe(413)
+    expect(await tooLarge.json()).toMatchObject({ code: 'DOCUMENT_FILE_TOO_LARGE' })
+    expect(storedObjects.size).toBe(3)
+  })
 
   it('upgrades legacy ROUTE/visible data while preserving the published pointer', async () => {
     const db = runtime.database.view()

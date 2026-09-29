@@ -27,5 +27,9 @@ jobs:
           cache: pnpm
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+      - name: Verify committed full Edition registry
+        run: |
+          pnpm edition:generate full
+          git diff --exit-code -- apps/server/src/generated apps/web/src/generated apps/web/src/router/_generated
       - name: Run quality checks
         run: pnpm check

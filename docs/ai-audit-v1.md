@@ -52,4 +52,4 @@ PDF 的 SourceRef 至少包含页码及版面框；DOCX 的 SourceRef 至少包�
 5. 完成持久化 Run 状态机、快照、重试、取消、进度和重跑。
 6. 最后接入 AuditPlan、Domain Tool 与可替换 Agent Runtime；具体 SDK 仅作为适配器。
 
-当前仓库只实现了第 1 步中的 Project 切片，后续能力仍需逐项实现并测试。
+当前仓库已实现第 1 步中的 Project、第 2 步的基础 Document/DocumentVersion 原文件上传与下载，以及供人工配置任务输入的 AuditTask 草稿和 TaskDocumentBinding。绑定明确固定 DocumentVersion 和任务角色；同项目文档可以供多个任务复用。任务草稿不能启动 Run；可验证的 AuditPlan、Canonical Document Model、EvidenceNode 和 Viewer 尚未实现，后续能力仍需逐项实现并测试。

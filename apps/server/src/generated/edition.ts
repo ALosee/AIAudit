@@ -12,7 +12,7 @@ const edition = defineEdition({
   id: 'full',
   modules: {
     'iam': { capabilities: ["iam.authentication","iam.authorization"] },
-    'audit': { capabilities: ["audit.projects"] },
+    'audit': { capabilities: ["audit.projects","audit.tasks"] },
     'branding': { capabilities: ["branding.core"] },
     'dictionary': { capabilities: ["dictionary.core"] },
     'navigation': { capabilities: ["navigation.core"] },

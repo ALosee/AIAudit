@@ -12,3 +12,16 @@ export const projectPermissionRequirements = Object.freeze({
     scope: 'UNSCOPED',
   }),
 })
+
+export const taskPermissionRequirements = Object.freeze({
+  view: definePermissionRequirement({
+    permission: 'audit.task.view',
+    capability: 'audit.tasks',
+    scope: 'UNSCOPED',
+  }),
+  manage: definePermissionRequirement({
+    permission: 'audit.task.manage',
+    capability: 'audit.tasks',
+    scope: 'UNSCOPED',
+  }),
+})

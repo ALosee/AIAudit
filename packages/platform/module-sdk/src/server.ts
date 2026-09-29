@@ -11,6 +11,7 @@ import {
   type RequestId,
 } from '@jingwei/kernel'
 import type { AppLogger } from '@jingwei/observability'
+import type { ObjectStorage } from '@jingwei/storage'
 import type { TenantDirectory } from '@jingwei/tenancy'
 
 import type { ModuleManifest } from './manifest.js'
@@ -60,6 +61,7 @@ export interface ServerModuleContext {
   readonly moduleRegistry: ModuleRegistry
   readonly sessionService: SessionService
   readonly tenantDirectory: TenantDirectory
+  readonly objectStorage: ObjectStorage | null
 }
 
 /** Result of installing one server module into the application composition root. */

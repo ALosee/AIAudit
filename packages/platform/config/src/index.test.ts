@@ -59,3 +59,23 @@ it('builds a bounded login lockout policy', () => {
   expect(() => loadConfig({ AUTH_LOGIN_MAX_FAILED_ATTEMPTS: '2' })).toThrow()
   expect(() => loadConfig({ AUTH_LOGIN_LOCK_SECONDS: '30' })).toThrow()
 })
+
+it('requires a complete object storage configuration and HTTPS in production', () => {
+  expect(loadConfig({}).objectStorage).toBeNull()
+  const storage = {
+    OBJECT_STORAGE_ENDPOINT: 'http://127.0.0.1:9000',
+    OBJECT_STORAGE_BUCKET: 'aiaudit-local',
+    OBJECT_STORAGE_ACCESS_KEY: 'local-user',
+    OBJECT_STORAGE_SECRET_KEY: 'local-secret',
+  }
+  expect(loadConfig(storage).objectStorage).toMatchObject({
+    endpoint: storage.OBJECT_STORAGE_ENDPOINT,
+    publicEndpoint: storage.OBJECT_STORAGE_ENDPOINT,
+    bucket: storage.OBJECT_STORAGE_BUCKET,
+    region: 'us-east-1',
+  })
+  expect(() => loadConfig({ OBJECT_STORAGE_ENDPOINT: storage.OBJECT_STORAGE_ENDPOINT })).toThrow(
+    'configured together',
+  )
+  expect(() => loadConfig({ NODE_ENV: 'production', ...storage })).toThrow('HTTPS')
+})

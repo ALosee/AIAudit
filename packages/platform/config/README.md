@@ -28,6 +28,7 @@ Jingwei 的集中配置解析包。它把不可信的 `process.env` 转换为经
 | `session.refreshReuseGraceSeconds` | `AUTH_REFRESH_REUSE_GRACE_SECONDS` | `5`                      |
 | `login.maxFailedAttempts`          | `AUTH_LOGIN_MAX_FAILED_ATTEMPTS`   | `5`                      |
 | `login.lockSeconds`                | `AUTH_LOGIN_LOCK_SECONDS`          | `900`                    |
+| `objectStorage`                    | `OBJECT_STORAGE_*`                 | `null`                   |
 
 额外约束：access 有效期必须严格小于 refresh idle，二者都必须严格小于 refresh absolute；refresh 复用并发窗口最大为 30 秒；登录失败阈值为 3–20 次，锁定时间为 60–86400 秒；端口必须在合法范围；数据库 URL 必须使用 PostgreSQL 协议。`APP_ORIGIN` 使用 HTTPS 时禁止显式关闭 Secure Cookie；HTTP 内网环境可由协议自动得到非 Secure Cookie，而不是借用 `NODE_ENV` 猜测传输协议。
 
@@ -50,6 +51,7 @@ const runtime = new DatabaseRuntime(config.databaseUrl)
 - `HTTP_TRUST_PROXY` 只可在请求必经受信代理且代理会清洗并重写 `X-Forwarded-For` 时开启；否则审计 IP 只取直连地址；
 - `COOKIE_SECURE` 表达实际 HTTPS 能力；生产和预发布应优先使用 HTTPS，并保持为 `true`；
 - 新增敏感配置时优先返回语义化对象，而不是到处传递原始字符串；
+- `OBJECT_STORAGE_ENDPOINT`、`OBJECT_STORAGE_BUCKET`、`OBJECT_STORAGE_ACCESS_KEY`、`OBJECT_STORAGE_SECRET_KEY` 必须一起配置；`OBJECT_STORAGE_PUBLIC_ENDPOINT` 可为浏览器可访问的独立地址，省略时使用内部地址。生产环境两个端点都必须为 HTTPS。密钥只保存在不入库的本地环境文件或部署密钥管理中；
 - 配置错误应在启动阶段快速失败。
 
 ## 新增配置项

@@ -78,7 +78,7 @@ describe('API documentation', () => {
           operationCount += 1
         }
       }
-      expect(operationCount).toBe(88)
+      expect(operationCount).toBe(100)
 
       expect(operationContract(document.paths, '/api/v1/audit/projects', 'get')).toEqual({
         kind: 'PERMISSION',
@@ -98,6 +98,28 @@ describe('API documentation', () => {
             capability: 'audit.projects',
             scope: 'UNSCOPED',
           },
+        ],
+      })
+      expect(
+        operationContract(document.paths, '/api/v1/audit/projects/{projectId}/tasks', 'get'),
+      ).toEqual({
+        kind: 'PERMISSION',
+        requirements: [
+          { permission: 'audit.task.view', capability: 'audit.tasks', scope: 'UNSCOPED' },
+          { permission: 'audit.project.view', capability: 'audit.projects', scope: 'UNSCOPED' },
+        ],
+      })
+      expect(
+        operationContract(
+          document.paths,
+          '/api/v1/audit/projects/{projectId}/tasks/{taskId}/documents',
+          'post',
+        ),
+      ).toEqual({
+        kind: 'PERMISSION',
+        requirements: [
+          { permission: 'audit.task.manage', capability: 'audit.tasks', scope: 'UNSCOPED' },
+          { permission: 'audit.project.view', capability: 'audit.projects', scope: 'UNSCOPED' },
         ],
       })
 

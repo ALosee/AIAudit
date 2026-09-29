@@ -19,3 +19,5 @@ export interface ObjectStorage {
   delete(key: string): Promise<void>
   getSignedUrl(key: string, expiresInSeconds: number): Promise<string>
 }
+
+export { S3ObjectStorage, type S3ObjectStorageOptions } from './s3-object-storage.js'

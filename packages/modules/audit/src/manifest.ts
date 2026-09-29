@@ -6,10 +6,15 @@ export const manifest = defineModule({
   category: 'business',
   dependencies: ['iam'],
   optionalDependencies: [],
-  capabilities: [{ id: 'audit.projects', name: '审核项目工作区' }],
+  capabilities: [
+    { id: 'audit.projects', name: '审核项目工作区' },
+    { id: 'audit.tasks', name: '审核任务' },
+  ],
   permissions: [
     { code: 'audit.project.view', name: '查看审核项目' },
     { code: 'audit.project.manage', name: '管理审核项目' },
+    { code: 'audit.task.view', name: '查看审核任务' },
+    { code: 'audit.task.manage', name: '管理审核任务' },
   ],
   routeDefinitions: [
     {

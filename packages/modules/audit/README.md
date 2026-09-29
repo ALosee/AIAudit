@@ -8,7 +8,7 @@ Audit 是面向文档审核的一条完整业务边界。Project 是审核工作
 
 ## 当前实现
 
-首个纵向切片是 Project：可分页查看、创建、修改和归档。Project 属于租户，不是平台租户本身，也不是 Navigation 的分类。归档保留历史，不物理删除。文档、抽参、规则、审核任务和 Agent 尚未实现，不应把当前项目页当成可执行审核入口。
+已实现 Project 与基础文档版本切片。Project 可分页查看、创建、修改和归档。项目内可上传 PDF/DOCX 文档、追加不可覆盖的版本、查看历史并获取 60 秒短期下载地址。归档项目保留历史且禁止上传。文档解析、EvidenceNode、OCR、抽参、规则、审核任务和 Agent 尚未实现，当前项目页不是可执行审核入口。
 
 ## Manifest 与权限
 
@@ -21,7 +21,7 @@ IAM 通过公开授权 API 提供权限检查。当前 Project 列表是租户�
 
 ## 数据所有权
 
-`audit.project` 存储项目名称、描述、状态、revision 和创建/修改人、时间。每次查询与写入均限定 `tenant_id`。Project 使用 UUID v7，`revision` 用于乐观并发。模块迁移在 `migrations/20260929090000_audit_project_foundation.ts`。
+`audit.project` 存储项目名称、描述、状态、revision 和创建/修改人、时间。`audit.document` 属于 Project，`audit.document_version` 保存不可覆盖的版本号、原文件名、格式、字节数、SHA-256、对象 key 和时间。每次查询与写入均限定 `tenant_id`；版本 API 不暴露对象 key。Project 与 Document 使用 UUID v7。迁移分别为 `20260929090000_audit_project_foundation.ts` 与 `20260929110000_audit_document_version.ts`。
 
 文档、规则和任务后续仍由 Audit 拥有，但各自会在模块内部使用独立的 domain/application/infrastructure 代码及数据库表，不把所有流程塞进 Project 用例。
 
@@ -29,15 +29,20 @@ IAM 通过公开授权 API 提供权限检查。当前 Project 列表是租户�
 
 路径前缀 `/api/v1/audit`：
 
-| 方法  | 路径                     | 作用             |
-| ----- | ------------------------ | ---------------- |
-| GET   | `/projects`              | 按状态分页读取   |
-| GET   | `/projects/{id}`         | 读取项目         |
-| POST  | `/projects`              | 创建项目         |
-| PATCH | `/projects/{id}`         | 按 revision 修改 |
-| POST  | `/projects/{id}/archive` | 按 revision 归档 |
+| 方法  | 路径                                                                         | 作用                   |
+| ----- | ---------------------------------------------------------------------------- | ---------------------- |
+| GET   | `/projects`                                                                  | 按状态分页读取         |
+| GET   | `/projects/{id}`                                                             | 读取项目               |
+| POST  | `/projects`                                                                  | 创建项目               |
+| PATCH | `/projects/{id}`                                                             | 按 revision 修改       |
+| POST  | `/projects/{id}/archive`                                                     | 按 revision 归档       |
+| GET   | `/projects/{projectId}/documents`                                            | 列出文档               |
+| POST  | `/projects/{projectId}/documents`                                            | 上传文档及首版         |
+| GET   | `/projects/{projectId}/documents/{documentId}/versions`                      | 列出版本               |
+| POST  | `/projects/{projectId}/documents/{documentId}/versions`                      | 上传新版本             |
+| GET   | `/projects/{projectId}/documents/{documentId}/versions/{versionId}/download` | 授权后签发短期下载地址 |
 
-外部输入经 Zod/OpenAPI 校验，客户端由模块专属 `paths` 类型与 Soybean Fetch 构建。写操作由 Application 在同一事务内写入 Project 和 append-only 审计记录。稳定错误码：`PROJECT_NOT_FOUND`、`PROJECT_REVISION_CONFLICT`、`PROJECT_ARCHIVED`。
+外部输入经 Zod/OpenAPI 校验，客户端由模块专属 `paths` 类型与 Soybean Fetch 构建。项目写操作在同一事务内写入 Project 和 append-only 审计记录；文档先写对象，再在同一数据库事务内写文档/版本元数据与审计，事务失败时补偿删除对象。文档沿用 `audit.project.view/manage` 权限，且每次操作都核对租户与所属项目。稳定错误码包括 `PROJECT_NOT_FOUND`、`PROJECT_REVISION_CONFLICT`、`PROJECT_ARCHIVED`、`DOCUMENT_NOT_FOUND`、`DOCUMENT_FILE_INVALID`、`DOCUMENT_STORAGE_FAILED`。
 
 ## Public API 与事件
 
@@ -54,4 +59,4 @@ IAM 通过公开授权 API 提供权限检查。当前 Project 列表是租户�
 - `src/web/pages`：项目工作区展示；
 - `migrations`：Audit 所有的数据库变更。
 
-变更后运行仓库根目录 `pnpm check`。数据库联调还需 PostgreSQL 18、迁移和一个具备 Audit 权限的租户账号。
+变更后运行仓库根目录 `pnpm check`。本地联调需要 PostgreSQL 18、迁移、具备 Audit 权限的账号，以及外部 RustFS Bucket 和 `OBJECT_STORAGE_*` 环境变量。当前上传上限 20 MiB，采用内存缓冲；更大文件需要流式契约。生产开放不可信上传前须实现病毒扫描与隔离。

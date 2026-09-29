@@ -9,6 +9,7 @@ import { systemClock } from '@jingwei/kernel'
 import { ModuleRegistry } from '@jingwei/module-sdk'
 import type { ServerModuleContext } from '@jingwei/module-sdk/server'
 import { createLogger, type AppLogger } from '@jingwei/observability'
+import { S3ObjectStorage } from '@jingwei/storage'
 import { PostgresTenantDirectory, type TenantDirectory } from '@jingwei/tenancy'
 
 import { generatedEdition } from '../generated/edition.js'
@@ -43,6 +44,8 @@ export function createRuntime(environment: NodeJS.ProcessEnv = process.env): Run
     tenantDirectory,
   )
   const operatorSessionService = createOperatorSessionService(database, config)
+  const objectStorage =
+    config.objectStorage === null ? null : new S3ObjectStorage(config.objectStorage)
 
   return {
     config,
@@ -52,6 +55,10 @@ export function createRuntime(environment: NodeJS.ProcessEnv = process.env): Run
     sessionService,
     operatorSessionService,
     tenantDirectory,
-    dispose: () => database.dispose(),
+    objectStorage,
+    dispose: async () => {
+      objectStorage?.dispose()
+      await database.dispose()
+    },
   }
 }

@@ -9,6 +9,7 @@
 - Web 静态资源或 Web 开发服务器；
 - Node.js Server 进程；
 - PostgreSQL；
+- Audit 文档功能启用时的独立 S3 兼容对象存储（本地可使用 RustFS）；
 - 日志采集与健康探针。
 
 当前没有 Outbox worker 或 dispatcher。`platform.outbox` 只是预留表结构，首次存在真实消费者时再按 [ADR 0014](./adr/0014-defer-outbox-activation-until-real-consumer.md) 完成运行时接线。
@@ -33,6 +34,7 @@ Edition 在构建前确定进入制品的模块集合。不要用同一个含全
 | Web 来源     | allowed origins                                  | 精确白名单，不使用任意通配                                    |
 | Cookie 传输  | `COOKIE_SECURE`                                  | 按真实 HTTPS 拓扑设置；HTTPS Origin 不允许关闭                |
 | 匿名启动租户 | BOOTSTRAP_TENANT_CODE                            | 必须指向活跃真实租户，默认 default；已登录使用 Session tenant |
+| 对象存储     | `OBJECT_STORAGE_*`                               | 私有 Bucket、HTTPS、受控凭据与备份；浏览器签名地址可访问      |
 | Edition      | development/full 等                              | 构建和迁移使用同一值                                          |
 
 完整变量名和默认值以 `platform/config` 的 schema 为准。部署模板引用配置时，应在 CI 中执行一次启动验证，防止拼写错误直到生产才暴露。
@@ -65,6 +67,8 @@ PLATFORM_OPERATOR_PASSWORD='<至少 12 个字符>' \
 `pnpm tenant:manage` 只保留作受限灾备入口。它要求显式 `TENANT_OPERATOR_ID`，创建/重试密码通过 `TENANT_ADMIN_PASSWORD` 注入，完整说明见 [租户管理 CLI](../tooling/tenant-management/README.md)。平台管理员初始化说明见 [平台管理工具](../tooling/platform-management/README.md)。
 
 日常 `pnpm dev` 从仓库根目录读取 `.env`、`.env.local`、`.env.development` 和 `.env.development.local`；测试联调使用 `pnpm dev:test`，只加载 `.env.test`。文件名代表运行模式，不是任意别名，因此创建 `.env.test` 后仍执行 `pnpm dev` 不会改变 Server 的数据库连接。
+
+Audit 文档上传需要在对应环境文件中配置 `OBJECT_STORAGE_ENDPOINT`、`OBJECT_STORAGE_BUCKET`、`OBJECT_STORAGE_ACCESS_KEY`、`OBJECT_STORAGE_SECRET_KEY`；`OBJECT_STORAGE_REGION` 默认 `us-east-1`。RustFS 独立运行并预先创建私有 Bucket。服务端访问地址与浏览器访问地址不同时，额外配置 `OBJECT_STORAGE_PUBLIC_ENDPOINT`。缺少整组配置时项目 CRUD 仍可运行，但文档上传和下载地址接口返回 `OBJECT_STORAGE_UNAVAILABLE`。不要将真实凭据加入 `.env.example` 或 Git。新环境启动后，应验证写入、授权签名下载和匿名请求被拒绝。
 
 停止本地数据库：
 

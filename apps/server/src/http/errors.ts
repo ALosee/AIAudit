@@ -35,12 +35,18 @@ export function installHttpErrors(app: Hono<ServerAppEnv>, logger: AppLogger): v
                 message: '请求 Content-Type 不受支持',
                 status: 415,
               })
-            : new ApplicationError({
-                code: 'INTERNAL_ERROR',
-                message: '服务器内部错误',
-                status: 500,
-                cause: error,
-              })
+            : error instanceof HTTPException && error.status === 413
+              ? new ApplicationError({
+                  code: 'REQUEST_TOO_LARGE',
+                  message: '上传文件过大',
+                  status: 413,
+                })
+              : new ApplicationError({
+                  code: 'INTERNAL_ERROR',
+                  message: '服务器内部错误',
+                  status: 500,
+                  cause: error,
+                })
     logger.error(
       {
         requestId: context.get('requestId'),
@@ -60,13 +66,16 @@ export function installHttpErrors(app: Hono<ServerAppEnv>, logger: AppLogger): v
   })
 }
 
-function normalizeStatus(status: number): 400 | 401 | 403 | 404 | 409 | 415 | 422 | 500 | 503 {
+function normalizeStatus(
+  status: number,
+): 400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 500 | 503 {
   switch (status) {
     case 400:
     case 401:
     case 403:
     case 404:
     case 409:
+    case 413:
     case 415:
     case 422:
     case 500:

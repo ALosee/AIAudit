@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+export * from './document.js'
+
 export const projectStatusSchema = z.enum(['ACTIVE', 'ARCHIVED'])
 export const projectNameSchema = z.string().trim().min(1).max(200)
 export const projectDescriptionSchema = z.string().trim().max(2_000)

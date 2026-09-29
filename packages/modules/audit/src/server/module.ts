@@ -3,7 +3,14 @@ import type { ServerModule } from '@jingwei/module-sdk/server'
 
 import { manifest } from '../manifest.js'
 import { createProjectRoutes } from './api/routes.js'
+import { ManageDocuments } from './application/manage-documents.js'
 import { ManageProjects } from './application/manage-projects.js'
+import { NodeDocumentDigest } from './infrastructure/document-digest.node.js'
+import {
+  PostgresDocumentStore,
+  PostgresDocumentUnitOfWork,
+  type DocumentDatabase,
+} from './infrastructure/document-store.pg.js'
 import {
   PostgresProjectStore,
   PostgresProjectUnitOfWork,
@@ -14,15 +21,25 @@ export const serverModule: ServerModule = {
   manifest,
   install(context) {
     const database = context.database.view<ProjectDatabase>()
+    const documentDatabase = context.database.view<DocumentDatabase>()
+    const access = createIamAccess(context.database, context.moduleRegistry, context.logger)
     const manage = new ManageProjects(
       new PostgresProjectStore(database),
       new PostgresProjectUnitOfWork(database),
-      createIamAccess(context.database, context.moduleRegistry, context.logger),
+      access,
+    )
+    const documents = new ManageDocuments(
+      new PostgresProjectStore(database),
+      new PostgresDocumentStore(documentDatabase),
+      new PostgresDocumentUnitOfWork(documentDatabase),
+      access,
+      context.objectStorage,
+      new NodeDocumentDigest(),
     )
     return Promise.resolve({
       id: manifest.id,
       basePath: '/audit',
-      routes: createProjectRoutes(manage),
+      routes: createProjectRoutes(manage, documents),
     })
   },
 }

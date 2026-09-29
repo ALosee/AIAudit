@@ -78,7 +78,7 @@ describe('API documentation', () => {
           operationCount += 1
         }
       }
-      expect(operationCount).toBe(88)
+      expect(operationCount).toBe(93)
 
       expect(operationContract(document.paths, '/api/v1/audit/projects', 'get')).toEqual({
         kind: 'PERMISSION',

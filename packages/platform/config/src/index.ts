@@ -24,7 +24,26 @@ const configSchema = z.object({
   AUTH_REFRESH_REUSE_GRACE_SECONDS: z.coerce.number().int().min(0).max(30).default(5),
   AUTH_LOGIN_MAX_FAILED_ATTEMPTS: z.coerce.number().int().min(3).max(20).default(5),
   AUTH_LOGIN_LOCK_SECONDS: z.coerce.number().int().min(60).max(86_400).default(900),
+  OBJECT_STORAGE_ENDPOINT: z.url().optional(),
+  OBJECT_STORAGE_PUBLIC_ENDPOINT: z.url().optional(),
+  OBJECT_STORAGE_REGION: z.string().trim().min(1).default('us-east-1'),
+  OBJECT_STORAGE_BUCKET: z
+    .string()
+    .trim()
+    .regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/)
+    .optional(),
+  OBJECT_STORAGE_ACCESS_KEY: z.string().min(1).optional(),
+  OBJECT_STORAGE_SECRET_KEY: z.string().min(1).optional(),
 })
+
+export interface ObjectStorageConfig {
+  readonly endpoint: string
+  readonly publicEndpoint: string
+  readonly region: string
+  readonly bucket: string
+  readonly accessKey: string
+  readonly secretKey: string
+}
 
 export interface AppConfig {
   readonly environment: 'development' | 'test' | 'production'
@@ -47,6 +66,7 @@ export interface AppConfig {
     readonly maxFailedAttempts: number
     readonly lockSeconds: number
   }
+  readonly objectStorage: ObjectStorageConfig | null
 }
 
 /**
@@ -74,6 +94,40 @@ export function loadConfig(environment: NodeJS.ProcessEnv): AppConfig {
     throw new Error('AUTH_ACCESS_TOKEN_SECONDS must be lower than AUTH_REFRESH_IDLE_SECONDS')
   }
 
+  const storageFields = [
+    value.OBJECT_STORAGE_ENDPOINT,
+    value.OBJECT_STORAGE_BUCKET,
+    value.OBJECT_STORAGE_ACCESS_KEY,
+    value.OBJECT_STORAGE_SECRET_KEY,
+  ]
+  if (
+    storageFields.some((field) => field !== undefined) &&
+    storageFields.some((field) => field === undefined)
+  ) {
+    throw new Error('Object storage endpoint, bucket and credentials must be configured together')
+  }
+  if (
+    value.OBJECT_STORAGE_PUBLIC_ENDPOINT !== undefined &&
+    value.OBJECT_STORAGE_ENDPOINT === undefined
+  ) {
+    throw new Error('OBJECT_STORAGE_PUBLIC_ENDPOINT requires OBJECT_STORAGE_ENDPOINT')
+  }
+  const storageEndpoint = value.OBJECT_STORAGE_ENDPOINT
+  const storagePublicEndpoint = value.OBJECT_STORAGE_PUBLIC_ENDPOINT ?? storageEndpoint
+  const storageBucket = value.OBJECT_STORAGE_BUCKET
+  const storageAccessKey = value.OBJECT_STORAGE_ACCESS_KEY
+  const storageSecretKey = value.OBJECT_STORAGE_SECRET_KEY
+  if (storageEndpoint !== undefined && storagePublicEndpoint !== undefined) {
+    for (const endpoint of [storageEndpoint, storagePublicEndpoint]) {
+      const protocol = new URL(endpoint).protocol
+      if (protocol !== 'http:' && protocol !== 'https:')
+        throw new Error('Object storage endpoints must use HTTP or HTTPS')
+      if (value.NODE_ENV === 'production' && protocol !== 'https:') {
+        throw new Error('Object storage endpoints must use HTTPS in production')
+      }
+    }
+  }
+
   return Object.freeze({
     environment: value.NODE_ENV,
     http: Object.freeze({
@@ -95,5 +149,19 @@ export function loadConfig(environment: NodeJS.ProcessEnv): AppConfig {
       maxFailedAttempts: value.AUTH_LOGIN_MAX_FAILED_ATTEMPTS,
       lockSeconds: value.AUTH_LOGIN_LOCK_SECONDS,
     }),
+    objectStorage:
+      storageEndpoint === undefined ||
+      storageBucket === undefined ||
+      storageAccessKey === undefined ||
+      storageSecretKey === undefined
+        ? null
+        : Object.freeze({
+            endpoint: storageEndpoint,
+            publicEndpoint: storagePublicEndpoint ?? storageEndpoint,
+            region: value.OBJECT_STORAGE_REGION,
+            bucket: storageBucket,
+            accessKey: storageAccessKey,
+            secretKey: storageSecretKey,
+          }),
   })
 }

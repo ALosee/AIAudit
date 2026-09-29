@@ -34,6 +34,7 @@
     "@jingwei/module-sdk": "workspace:*",
     "@jingwei/observability": "workspace:*",
     "@jingwei/outbox": "workspace:*",
+    "@jingwei/storage": "workspace:*",
     "@jingwei/tenancy": "workspace:*",
     "argon2": "catalog:",
     "hono": "catalog:",

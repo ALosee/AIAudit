@@ -12,6 +12,7 @@ import {
   updateProjectSchema,
 } from '../../shared/index.js'
 import { projectPermissionRequirements } from '../application/authorization-requirements.js'
+import { documentApiRoutes } from './document-openapi.js'
 
 const json = <TSchema>(schema: TSchema) => ({ 'application/json': { schema } })
 const error = (description: string) => ({ description, content: json(apiErrorSchema) })
@@ -118,5 +119,5 @@ export const auditOpenApiContract = {
   id: 'audit',
   title: 'Audit',
   basePath: '/audit',
-  routes: Object.values(projectApiRoutes),
+  routes: [...Object.values(projectApiRoutes), ...Object.values(documentApiRoutes)],
 } as const

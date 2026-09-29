@@ -13,6 +13,8 @@ function message(cause: unknown): string {
   return cause instanceof Error ? cause.message : '操作失败，请稍后重试'
 }
 
+const PAGE_SIZE = 50
+
 /** Owns project listing and editing; the page only binds and presents this state. */
 export function useProjectManagement() {
   const request = useApiRequestState()
@@ -21,16 +23,26 @@ export function useProjectManagement() {
   const total = ref(0)
   const offset = ref(0)
   const status = ref<ProjectStatus>('ACTIVE')
+  const search = ref('')
   const selectedId = ref<string | null>(null)
   const creating = ref(false)
   const name = ref('')
   const description = ref('')
   const error = ref('')
-  const limit = 50
+  const limit = PAGE_SIZE
 
   const selected = computed(() => items.value.find((item) => item.id === selectedId.value) ?? null)
   const hasPrevious = computed(() => offset.value > 0)
   const hasNext = computed(() => offset.value + limit < total.value)
+  const filteredItems = computed(() => {
+    const keyword = search.value.trim().toLowerCase()
+    if (keyword === '') return items.value
+    return items.value.filter(
+      (item) =>
+        item.name.toLowerCase().includes(keyword) ||
+        item.description.toLowerCase().includes(keyword),
+    )
+  })
 
   async function load() {
     const result = await api.listProjects(
@@ -59,6 +71,13 @@ export function useProjectManagement() {
   function beginCreate() {
     creating.value = true
     selectedId.value = null
+    name.value = ''
+    description.value = ''
+    error.value = ''
+  }
+
+  function cancelCreate() {
+    creating.value = false
     name.value = ''
     description.value = ''
     error.value = ''
@@ -139,9 +158,11 @@ export function useProjectManagement() {
 
   return {
     items,
+    filteredItems,
     total,
     offset,
     status,
+    search,
     selected,
     creating,
     name,
@@ -151,9 +172,11 @@ export function useProjectManagement() {
     canManage,
     hasPrevious,
     hasNext,
+    pageSize: PAGE_SIZE,
     load,
     select,
     beginCreate,
+    cancelCreate,
     save,
     archive,
     showStatus,

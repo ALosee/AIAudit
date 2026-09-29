@@ -12,6 +12,7 @@
     "@jingwei/config": "workspace:*",
     "@jingwei/database": "workspace:*",
     "@jingwei/kernel": "workspace:*",
+    "@jingwei/module-audit": "workspace:*",
     "@jingwei/module-dictionary": "workspace:*",
     "@jingwei/module-iam": "workspace:*",
     "@jingwei/module-navigation": "workspace:*",

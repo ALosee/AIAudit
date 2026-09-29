@@ -2,6 +2,7 @@
 import { Button, Input, Textarea, dialog } from '@jingwei/ui'
 
 import ProjectDocuments from '../components/ProjectDocuments.vue'
+import ProjectTasks from '../components/ProjectTasks.vue'
 import { useProjectManagement } from '../composables/use-project-management.js'
 
 const projects = useProjectManagement()
@@ -175,6 +176,11 @@ function confirmArchive() {
         </div>
       </section>
     </div>
+    <ProjectTasks
+      v-if="projects.selected.value"
+      :key="projects.selected.value.id"
+      :project="projects.selected.value"
+    />
     <ProjectDocuments
       v-if="projects.selected.value"
       :key="projects.selected.value.id"

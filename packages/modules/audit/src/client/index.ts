@@ -15,6 +15,17 @@ import {
   type DocumentList,
   type DocumentVersionList,
   type DocumentWithVersion,
+  auditTaskSchema,
+  taskDocumentBindingListSchema,
+  taskListSchema,
+  taskWithBindingSchema,
+  type AuditTask,
+  type BindTaskDocument,
+  type CreateTask,
+  type TaskDocumentBinding,
+  type TaskList,
+  type TaskWithBinding,
+  type UpdateTask,
   projectListSchema,
   projectSchema,
   type CreateProject,
@@ -157,6 +168,117 @@ export function getDocumentDownload(
     api.client.get('/projects/{projectId}/documents/{documentId}/versions/{versionId}/download', {
       pathParams: { projectId, documentId, versionId },
       schema: documentDownloadSchema,
+      ...options,
+    }),
+  )
+}
+
+export function listTasks(
+  projectId: string,
+  query: { limit: number; offset?: number } = { limit: 50 },
+  options?: ApiRequestOptions,
+): Promise<ApiResult<TaskList>> {
+  return toApiResult(
+    api.client.get('/projects/{projectId}/tasks', {
+      pathParams: { projectId },
+      query,
+      schema: taskListSchema,
+      ...options,
+    }),
+  )
+}
+
+export function getTask(
+  projectId: string,
+  taskId: string,
+  options?: ApiRequestOptions,
+): Promise<ApiResult<AuditTask>> {
+  return toApiResult(
+    api.client.get('/projects/{projectId}/tasks/{taskId}', {
+      pathParams: { projectId, taskId },
+      schema: auditTaskSchema,
+      ...options,
+    }),
+  )
+}
+
+export function createTask(
+  projectId: string,
+  input: CreateTask,
+  options?: ApiRequestOptions,
+): Promise<ApiResult<AuditTask>> {
+  return toApiResult(
+    api.client.post('/projects/{projectId}/tasks', {
+      pathParams: { projectId },
+      body: input,
+      schema: auditTaskSchema,
+      ...options,
+    }),
+  )
+}
+
+export function updateTask(
+  projectId: string,
+  taskId: string,
+  input: UpdateTask,
+  options?: ApiRequestOptions,
+): Promise<ApiResult<AuditTask>> {
+  return toApiResult(
+    api.client.patch('/projects/{projectId}/tasks/{taskId}', {
+      pathParams: { projectId, taskId },
+      body: {
+        expectedRevision: input.expectedRevision,
+        ...(input.name === undefined ? {} : { name: input.name }),
+        ...(input.objective === undefined ? {} : { objective: input.objective }),
+      },
+      schema: auditTaskSchema,
+      ...options,
+    }),
+  )
+}
+
+export function listTaskDocuments(
+  projectId: string,
+  taskId: string,
+  options?: ApiRequestOptions,
+): Promise<ApiResult<{ items: TaskDocumentBinding[] }>> {
+  return toApiResult(
+    api.client.get('/projects/{projectId}/tasks/{taskId}/documents', {
+      pathParams: { projectId, taskId },
+      schema: taskDocumentBindingListSchema,
+      ...options,
+    }),
+  )
+}
+
+export function bindTaskDocument(
+  projectId: string,
+  taskId: string,
+  input: BindTaskDocument,
+  options?: ApiRequestOptions,
+): Promise<ApiResult<TaskWithBinding>> {
+  return toApiResult(
+    api.client.post('/projects/{projectId}/tasks/{taskId}/documents', {
+      pathParams: { projectId, taskId },
+      body: input,
+      schema: taskWithBindingSchema,
+      ...options,
+    }),
+  )
+}
+
+export function unbindTaskDocument(
+  projectId: string,
+  taskId: string,
+  bindingId: string,
+  expectedRevision: number,
+  options?: ApiRequestOptions,
+): Promise<ApiResult<AuditTask>> {
+  return toApiResult(
+    api.client.post('/projects/{projectId}/tasks/{taskId}/documents/{bindingId}/unbind', {
+      pathParams: { projectId, taskId, bindingId },
+      body: { expectedRevision },
+      schema: auditTaskSchema,
       ...options,
     }),
   )

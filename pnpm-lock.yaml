@@ -1124,6 +1124,9 @@ importers:
       '@jingwei/kernel':
         specifier: workspace:*
         version: link:../../packages/platform/kernel
+      '@jingwei/module-audit':
+        specifier: workspace:*
+        version: link:../../packages/modules/audit
       '@jingwei/module-dictionary':
         specifier: workspace:*
         version: link:../../packages/modules/dictionary
